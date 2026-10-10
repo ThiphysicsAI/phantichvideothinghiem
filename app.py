@@ -1,10 +1,11 @@
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
-import gradio as gr
+import streamlit as st
 import tempfile
+import os
 
-# Hàm xử lý đã được bổ sung biến số "chieu_cao_thuc_te"
+# Hàm xử lý giữ nguyên thuật toán
 def phan_tich_video(video_path, chieu_cao_thuc_te):
     if video_path is None:
         return None, "Vui lòng tải lên một video!"
@@ -53,10 +54,9 @@ def phan_tich_video(video_path, chieu_cao_thuc_te):
     plt.close()
 
     # --- Hiệu chuẩn thông số Toán học ---
-    do_roi_pixel = max(toa_do_y) - min(toa_do_y) # Tự động tính quãng đường rơi bằng pixel
+    do_roi_pixel = max(toa_do_y) - min(toa_do_y)
     if do_roi_pixel == 0: do_roi_pixel = 1
 
-    # Tỉ lệ quy đổi động dựa trên chiều cao người dùng nhập
     ti_le_pixel_met = chieu_cao_thuc_te / do_roi_pixel
     toa_do_y_met = [y * ti_le_pixel_met for y in toa_do_y]
 
@@ -68,9 +68,9 @@ def phan_tich_video(video_path, chieu_cao_thuc_te):
 
     # --- Tạo Báo cáo ---
     bao_cao = f"📊 THÔNG SỐ ĐỘNG HỌC (Đã hiệu chuẩn theo độ cao {chieu_cao_thuc_te}m):\n"
-    bao_cao += f"- Phương trình: y = {a:.2f}t^2 + {b:.2f}t + {c_coef:.2f}\n"
+    bao_cao += f"- Phương trình: y = {a:.2f}t² + {b:.2f}t + {c_coef:.2f}\n"
     bao_cao += f"- Vận tốc ban đầu (v0): {b:.2f} m/s\n"
-    bao_cao += f"- Gia tốc rơi (g) đo được: {g_do_duoc:.2f} m/s^2\n"
+    bao_cao += f"- Gia tốc rơi (g) đo được: {g_do_duoc:.2f} m/s²\n"
     bao_cao += f"- Sai số so với g chuẩn (9.8): {sai_so:.2f}%\n\n"
 
     bao_cao += "🤖 AI ĐÁNH GIÁ THÍ NGHIỆM:\n"
@@ -83,22 +83,35 @@ def phan_tich_video(video_path, chieu_cao_thuc_te):
 
     return temp_img.name, bao_cao
 
-# Thiết kế Giao diện Web được cập nhật
-with gr.Blocks(theme=gr.themes.Soft()) as ung_dung:
-    gr.Markdown("# 🚀 PHYSIX - Nền tảng AI Phân tích Thí nghiệm Vật lý")
+# --- Thiết kế Giao diện Web bằng Streamlit ---
+st.set_page_config(page_title="PHYSIX - Phân tích thí nghiệm", layout="wide")
+st.markdown("# 🚀 PHYSIX - Nền tảng AI Phân tích Thí nghiệm Vật lý")
 
-    with gr.Row():
-        with gr.Column():
-            video_dau_vao = gr.File(label="Tải file video thí nghiệm (chấp nhận mọi đuôi file)", type="filepath")
-            # Ô nhập liệu chiều cao mới được thêm vào
-            chieu_cao_input = gr.Number(label="Nhập chiều cao thả rơi thực tế (mét)", value=1.5, step=0.1)
-            nut_phan_tich = gr.Button("Phân tích bằng AI", variant="primary")
+col1, col2 = st.columns(2)
 
-        with gr.Column():
-            anh_do_thi = gr.Image(label="Đồ thị Động học")
-            van_ban_bao_cao = gr.Textbox(label="Kết quả & Đánh giá", lines=8)
+with col1:
+    video_dau_vao = st.file_uploader("Tải file video thí nghiệm (chấp nhận mp4, mov, avi)", type=['mp4', 'mov', 'avi'])
+    chieu_cao_input = st.number_input("Nhập chiều cao thả rơi thực tế (mét)", value=1.5, step=0.1)
+    nut_phan_tich = st.button("Phân tích bằng AI", type="primary", use_container_width=True)
 
-    # Kết nối dữ liệu từ ô nhập chiều cao vào thuật toán phân tích
-    nut_phan_tich.click(fn=phan_tich_video, inputs=[video_dau_vao, chieu_cao_input], outputs=[anh_do_thi, van_ban_bao_cao])
+with col2:
+    if nut_phan_tich:
+        if video_dau_vao is not None:
+            # Lưu video tạm thời để OpenCV có thể đọc được file
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tfile:
+                tfile.write(video_dau_vao.read())
+                temp_video_path = tfile.name
 
-ung_dung.launch(share=True)
+            with st.spinner('AI đang phân tích video từng khung hình...'):
+                anh_do_thi, van_ban_bao_cao = phan_tich_video(temp_video_path, chieu_cao_input)
+
+            if anh_do_thi is None: 
+                st.error(van_ban_bao_cao)
+            else:
+                st.image(anh_do_thi, caption="Đồ thị Động học")
+                st.text_area("Kết quả & Đánh giá", value=van_ban_bao_cao, height=250)
+
+            # Xóa file video tạm sau khi phân tích xong để giải phóng bộ nhớ
+            os.remove(temp_video_path)
+        else:
+            st.warning("⚠️ Vui lòng tải lên một video trước khi nhấn phân tích!")
