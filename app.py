@@ -105,7 +105,7 @@ with col2:
                     try:
                         api_key_an = st.secrets["GEMINI_API_KEY"]
                         genai.configure(api_key=api_key_an)
-                        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+                        model = genai.GenerativeModel('gemini-1.5-pro')
                         img_to_send = Image.open(anh_do_thi)
                         
                         prompt = f"""
