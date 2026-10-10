@@ -203,7 +203,7 @@ with col2:
                         genai.configure(api_key=api_key_an)
                         
                         # Sử dụng thẳng gemini-2.5-flash để phản hồi cực nhanh
-                        ten_model_phu_hop = 'models/gemini-3.5-flash-lite'
+                        ten_model_phu_hop = 'models/gemini-2.5-flash'
                         model = genai.GenerativeModel(ten_model_phu_hop)
                         img_to_send = Image.open(anh_do_thi)
                         
