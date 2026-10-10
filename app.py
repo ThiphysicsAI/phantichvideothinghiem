@@ -77,12 +77,6 @@ def phan_tich_video(video_path, chieu_cao_thuc_te):
 # --- Giao diện Web ---
 st.set_page_config(page_title="PHYSIX - Phân tích thí nghiệm", layout="wide")
 
-# Sidebar cấu hình AI
-with st.sidebar:
-    st.header("⚙️ Cấu hình AI")
-    api_key = st.text_input("Nhập Google Gemini API Key", type="password")
-    st.markdown("*Lưu ý: API Key chỉ lưu tạm thời trong phiên làm việc này.*")
-
 st.markdown("# 🚀 PHYSIX - Nền tảng AI Phân tích Thí nghiệm Vật lý")
 
 col1, col2 = st.columns([1, 1.2])
@@ -94,9 +88,7 @@ with col1:
 
 with col2:
     if nut_phan_tich:
-        if not api_key:
-            st.warning("⚠️ Vui lòng nhập Gemini API Key ở thanh bên trái (Sidebar) trước khi phân tích.")
-        elif video_dau_vao is not None:
+        if video_dau_vao is not None:
             with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tfile:
                 tfile.write(video_dau_vao.read())
                 temp_video_path = tfile.name
@@ -109,14 +101,15 @@ with col2:
                 else:
                     st.image(anh_do_thi, caption="Đồ thị Động học trích xuất từ video")
                     
-                    # Cấu hình và gọi Gemini
+                    # Tự động lấy API Key từ cấu hình Secrets của Streamlit
                     try:
-                        genai.configure(api_key=api_key)
+                        api_key_an = st.secrets["GEMINI_API_KEY"]
+                        genai.configure(api_key=api_key_an)
                         model = genai.GenerativeModel('gemini-1.5-flash')
                         img_to_send = Image.open(anh_do_thi)
                         
                         prompt = f"""
-                        Bạn là một giáo viên Vật lí cấp 3 tâm huyết, thân thiện và thấu hiểu học sinh.
+                        Bạn là một giáo viên Vật lí cấp 3 tâm huyết, thân thiện tên là cô Thi.
                         Học sinh vừa làm xong thí nghiệm thả rơi tự do vật thể.
                         Dựa vào bức ảnh đồ thị y-t đính kèm và các số liệu đo được dưới đây, hãy viết một lời nhận xét ngắn gọn (khoảng 150 chữ) gửi trực tiếp cho học sinh.
                         - Phương trình chuyển động: {thong_so['phuong_trinh']}
@@ -126,13 +119,15 @@ with col2:
                         
                         Yêu cầu:
                         - Khen ngợi nếu sai số thấp (<10%), động viên và chỉ ra nguyên nhân (vận tốc đầu khác 0 do lực ném tay, lực cản không khí, góc quay camera) nếu sai số cao.
-                        - Xưng hô "thầy/cô" và "em". Dùng giọng văn khích lệ, mềm mỏng.
+                        - Xưng hô "cô" và "các em". Dùng giọng văn khích lệ, thấu hiểu.
                         """
                         
                         response = model.generate_content([prompt, img_to_send])
                         st.success("🤖 **Nhận xét từ AI:**")
                         st.markdown(response.text)
                         
+                    except KeyError:
+                        st.error("Lỗi: Không tìm thấy GEMINI_API_KEY. Hãy kiểm tra lại phần cài đặt Secrets trên Streamlit Cloud.")
                     except Exception as e:
                         st.error(f"Lỗi khi kết nối với Gemini: {e}")
 
