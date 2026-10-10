@@ -1,3 +1,7 @@
 streamlit
 google-genai
 pydantic
+opencv-python-headless
+matplotlib
+numpy
+gradio
