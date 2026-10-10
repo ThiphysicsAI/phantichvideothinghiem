@@ -1,7 +1,6 @@
 streamlit
-google-genai
-pydantic
+google-generativeai
+Pillow
 opencv-python-headless
 matplotlib
 numpy
-gradio
