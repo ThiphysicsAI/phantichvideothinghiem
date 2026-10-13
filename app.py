@@ -7,6 +7,12 @@ import os
 import google.generativeai as genai
 from PIL import Image
 
+# --- HÀM TÍNH HỆ SỐ TIN CẬY R-SQUARED ---
+def tinh_r2(y_thuc_te, y_du_doan):
+    ss_res = np.sum((np.array(y_thuc_te) - np.array(y_du_doan))**2)
+    ss_tot = np.sum((np.array(y_thuc_te) - np.mean(y_thuc_te))**2)
+    return 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+
 # --- HÀM XỬ LÝ PHÂN TÍCH ĐA ĐỘNG HỌC ---
 def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
     if video_path is None:
@@ -19,7 +25,6 @@ def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
     frame_count = 0
     fgbg = cv2.createBackgroundSubtractorMOG2(detectShadows=False)
-
     prev_x, prev_y = None, None
 
     while cap.isOpened():
@@ -60,66 +65,85 @@ def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
     cap.release()
 
     if len(toa_do_y) < 5:
-        return None, None, "AI không tìm thấy quỹ đạo rõ ràng! Đảm bảo quả bóng không bị che khuất và có màu nổi bật so với phông nền."
+        return None, None, "AI không tìm thấy quỹ đạo rõ ràng! Đảm bảo quả bóng không bị che khuất và có màu nổi bật."
 
-    # --- BỘ LỌC CẮT BỎ ĐOẠN BÓNG NẢY (BOUNCE FILTER) ---
-    # Tìm điểm chạm đất (giá trị Y lớn nhất do trục Y hướng xuống)
+    # Lọc điểm nảy (Bounce Filter)
     diem_cham_dat_idx = np.argmax(toa_do_y)
-    
-    # Chỉ giữ lại dữ liệu từ lúc bắt đầu chuyển động đến khi chạm đất
     toa_do_y = toa_do_y[:diem_cham_dat_idx + 1]
     toa_do_x = toa_do_x[:diem_cham_dat_idx + 1]
     thoi_gian = thoi_gian[:diem_cham_dat_idx + 1]
 
     if len(toa_do_y) < 5:
-         return None, None, "❌ Chuyển động trước khi chạm mặt phẳng quá ngắn, không đủ dữ liệu để vẽ phương trình quỹ đạo!"
-    # ----------------------------------------------------
+         return None, None, "❌ Chuyển động trước khi chạm mặt phẳng quá ngắn!"
 
-    # --- BỘ LỌC ĐỘNG HỌC THEO LOẠI CHUYỂN ĐỘNG ---
     do_lech_x = max(toa_do_x) - min(toa_do_x)
     do_roi_y = max(toa_do_y) - min(toa_do_y)
     if do_roi_y == 0: do_roi_y = 1
     if do_lech_x == 0: do_lech_x = 1
 
-    if loai_chuyen_dong == "Rơi tự do":
-        if do_lech_x > do_roi_y * 0.4:
-            return None, None, "❌ Chế độ Rơi tự do: Cảnh báo vật thể bị ném ngang. Các em hãy chọn đúng chế độ hoặc thả lại video!"
-    elif loai_chuyen_dong in ["Ném ngang", "Ném xiên"]:
-        if do_lech_x < do_roi_y * 0.15:
-            return None, None, f"❌ Chế độ {loai_chuyen_dong}: Quỹ đạo quá thẳng đứng, giống rơi tự do hơn. Các em kiểm tra lại nhé!"
+    if loai_chuyen_dong == "Rơi tự do" and do_lech_x > do_roi_y * 0.4:
+        return None, None, "❌ Cảnh báo vật thể bị ném ngang. Các em hãy thả rơi tự do thẳng đứng!"
+    elif loai_chuyen_dong in ["Ném ngang", "Ném xiên"] and do_lech_x < do_roi_y * 0.15:
+        return None, None, f"❌ Quỹ đạo quá thẳng đứng, giống rơi tự do hơn!"
 
-    # --- QUY ĐỔI HỆ QUY CHIẾU & TÍNH TOÁN ---
+    # --- QUY ĐỔI & TÍNH TOÁN VẬT LÝ SÂU ---
     ti_le_pixel_met = chieu_cao_thuc_te / do_roi_y
     toa_do_y_met = [(y - min(toa_do_y)) * ti_le_pixel_met for y in toa_do_y]
     toa_do_x_met = [(x - min(toa_do_x)) * ti_le_pixel_met for x in toa_do_x]
 
+    # Phân tích phương Y
     he_so_y = np.polyfit(thoi_gian, toa_do_y_met, 2)
+    y_du_doan = np.polyval(he_so_y, thoi_gian)
+    r2_y = tinh_r2(toa_do_y_met, y_du_doan)
+    
     ay, by, cy = he_so_y[0], he_so_y[1], he_so_y[2]
     g_do_duoc = 2 * ay
-    sai_so = abs(g_do_duoc - 9.8) / 9.8 * 100
+    sai_so_g = abs(g_do_duoc - 9.8) / 9.8 * 100
+    v0y = abs(by) # Vận tốc đầu trục Y
 
-    thong_so_tho = {
+    thong_so = {
         "loai": loai_chuyen_dong,
         "phuong_trinh_y": f"y = {ay:.2f}t² + {by:.2f}t + {cy:.2f}",
         "g": g_do_duoc,
-        "sai_so": sai_so
+        "sai_so": sai_so_g,
+        "v0y": v0y,
+        "r2": r2_y * 100
     }
 
+    # Phân tích phương X (nếu có)
     if loai_chuyen_dong in ["Ném ngang", "Ném xiên"]:
         he_so_x = np.polyfit(thoi_gian, toa_do_x_met, 1)
-        thong_so_tho["phuong_trinh_x"] = f"x = {he_so_x[0]:.2f}t"
-        thong_so_tho["vx"] = he_so_x[0]
+        x_du_doan = np.polyval(he_so_x, thoi_gian)
+        v0x = abs(he_so_x[0])
+        
+        thong_so["phuong_trinh_x"] = f"x = {he_so_x[0]:.2f}t"
+        thong_so["v0x"] = v0x
+        
+        # Riêng ném xiên tính thêm góc ném và Tầm xa/Tầm cao
+        if loai_chuyen_dong == "Ném xiên":
+            v0_tong = np.sqrt(v0x**2 + v0y**2)
+            goc_nem = np.arctan(v0y / v0x) * 180 / np.pi if v0x != 0 else 90
+            h_max_lt = (v0_tong**2 * (np.sin(goc_nem * np.pi / 180)**2)) / (2 * 9.8)
+            h_max_tt = max(toa_do_y_met) - min(toa_do_y_met)
+            
+            thong_so.update({
+                "goc_nem": goc_nem,
+                "h_max_lt": h_max_lt,
+                "h_max_tt": h_max_tt
+            })
 
-    # --- VẼ ĐỒ THỊ ---
+    # --- VẼ ĐỒ THỊ LỒNG GHÉP LÝ THUYẾT ---
     plt.figure(figsize=(8, 4))
     if loai_chuyen_dong == "Rơi tự do":
-        plt.plot(thoi_gian, toa_do_y_met, 'ro-', markersize=4, label='Tọa độ y theo t')
-        plt.title('Đồ thị Động học (Rơi tự do)')
+        plt.plot(thoi_gian, toa_do_y_met, 'ro-', markersize=4, label='Thực tế')
+        plt.plot(thoi_gian, y_du_doan, 'r--', alpha=0.7, label='Lý thuyết (Fit line)')
+        plt.title(f'Đồ thị Rơi tự do (Độ tin cậy R² = {thong_so["r2"]:.1f}%)')
         plt.xlabel('Thời gian t (giây)')
         plt.ylabel('Độ dịch chuyển y (m)')
     else:
-        plt.plot(toa_do_x_met, toa_do_y_met, 'bo-', markersize=4, label='Quỹ đạo Parabol')
-        plt.title(f'Đồ thị Quỹ đạo x-y ({loai_chuyen_dong})')
+        plt.plot(toa_do_x_met, toa_do_y_met, 'bo-', markersize=4, label='Thực tế')
+        plt.plot(x_du_doan, y_du_doan, 'b--', alpha=0.7, label='Lý thuyết (Parabol)')
+        plt.title(f'Đồ thị Quỹ đạo {loai_chuyen_dong} (Độ tin cậy R² = {thong_so["r2"]:.1f}%)')
         plt.xlabel('Tọa độ x (m)')
         plt.ylabel('Tọa độ y (m)')
         
@@ -130,7 +154,7 @@ def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
     plt.savefig(temp_img.name, bbox_inches='tight')
     plt.close()
 
-    return temp_img.name, thong_so_tho, None
+    return temp_img.name, thong_so, None
 
 # --- GIAO DIỆN WEB ---
 st.set_page_config(page_title="PHYSIX - Phân tích thí nghiệm", layout="wide")
@@ -166,7 +190,7 @@ with col1:
     st.markdown("### 📥 1. Thiết lập bài thực hành")
     loai_chuyen_dong = st.radio("Chọn dạng chuyển động:", ["Rơi tự do", "Ném ngang", "Ném xiên"], horizontal=True)
     video_dau_vao = st.file_uploader(f"Tải video thí nghiệm ({loai_chuyen_dong})", type=['mp4', 'mov', 'avi'])
-    chieu_cao_input = st.number_input("Nhập chiều cao max quỹ đạo thực tế (mét)", value=1.5, step=0.1)
+    chieu_cao_input = st.number_input("Nhập chiều cao/tầm xa max thực tế (mét)", value=1.5, step=0.1)
     
     st.markdown("<br>", unsafe_allow_html=True)
     nut_phan_tich = st.button("✨ PHÂN TÍCH & NHẬN XÉT BẰNG AI ✨", use_container_width=True)
@@ -178,7 +202,7 @@ with col2:
                 tfile.write(video_dau_vao.read())
                 temp_video_path = tfile.name
 
-            with st.spinner('⏳ Đang xử lý video từng khung hình & kết nối với trợ lý AI...'):
+            with st.spinner('⏳ Đang xử lý video, trích xuất dữ liệu và gọi giáo viên AI...'):
                 anh_do_thi, thong_so, loi = phan_tich_video(temp_video_path, chieu_cao_input, loai_chuyen_dong)
 
                 if loi:
@@ -191,45 +215,42 @@ with col2:
                         api_key_an = st.secrets["GEMINI_API_KEY"]
                         genai.configure(api_key=api_key_an)
                         
-                        ten_model_phu_hop = 'models/gemini-3.5-flash-lite'
-                        model = genai.GenerativeModel(ten_model_phu_hop)
+                        model = genai.GenerativeModel('models/gemini-3.5-flash-lite')
                         img_to_send = Image.open(anh_do_thi)
                         
-                        muc_dich_thi_nghiem = ""
+                        # --- CHUẨN BỊ BỘ DỮ LIỆU ĐỘNG HỌC GỬI CHO AI ---
+                        du_lieu_bo_sung = ""
                         if loai_chuyen_dong == "Rơi tự do":
-                            muc_dich_thi_nghiem = """
-                            - Chứng minh vật rơi tự do là chuyển động thẳng nhanh dần đều (quãng đường tỉ lệ với bình phương thời gian).
-                            - Xác định gia tốc rơi tự do g.
-                            - Rèn luyện năng lực đo đạc, xử lý số liệu, đánh giá sai số.
-                            """
-                        else:
-                            muc_dich_thi_nghiem = """
-                            - Khẳng định tính độc lập của hai chuyển động thành phần (thẳng đều theo phương ngang và rơi tự do theo phương dọc).
-                            - Giải thích vì sao vật chuyển động theo quỹ đạo Parabol.
-                            """
-                        
-                        thong_so_x_txt = f"\n- Phương trình trục Ox: {thong_so.get('phuong_trinh_x', 'Không có')}" if loai_chuyen_dong != "Rơi tự do" else ""
-                        
+                            du_lieu_bo_sung = f"- Vận tốc đầu v0 đo được: {thong_so['v0y']:.2f} m/s (Lý thuyết phải = 0)."
+                        elif loai_chuyen_dong == "Ném ngang":
+                            du_lieu_bo_sung = f"- Vận tốc ném ngang v0x: {thong_so['v0x']:.2f} m/s.\n- Vận tốc rơi ban đầu v0y: {thong_so['v0y']:.2f} m/s (Lý thuyết phải = 0)."
+                        elif loai_chuyen_dong == "Ném xiên":
+                            du_lieu_bo_sung = f"- Góc ném ban đầu: {thong_so['goc_nem']:.1f} độ.\n- Tầm cao tối đa (Thực tế): {thong_so['h_max_tt']:.2f} m.\n- Tầm cao tối đa (Lý thuyết theo góc): {thong_so['h_max_lt']:.2f} m."
+
                         prompt = f"""
-                        Bạn là một giáo viên Vật lí cấp 3 tâm huyết, thân thiện tên là cô Thi.
-                        Học sinh vừa làm xong thí nghiệm {thong_so['loai']}.
-                        Mục đích cốt lõi của bài thực hành này là: {muc_dich_thi_nghiem}
+                        Bạn là một giáo viên Vật lí cấp 3 xuất sắc tên là cô Thi. Học sinh vừa hoàn thành thí nghiệm {thong_so['loai']}.
                         
-                        Dựa vào bức ảnh đồ thị đính kèm và các số liệu đo được dưới đây, hãy viết một lời nhận xét (khoảng 150 - 200 chữ) gửi trực tiếp cho học sinh.
-                        - Phương trình trục Oy: {thong_so['phuong_trinh_y']}{thong_so_x_txt}
-                        - Gia tốc g đo được (từ Oy): {thong_so['g']:.2f} m/s²
-                        - Sai số so với g chuẩn (9.8): {thong_so['sai_so']:.2f}%
+                        HÃY ĐÁNH GIÁ DỰA TRÊN CÁC SỐ LIỆU CHUYÊN SÂU SAU:
+                        - Phương trình trục Oy: {thong_so['phuong_trinh_y']}
+                        - Gia tốc g đo được: {thong_so['g']:.2f} m/s² (Sai số: {thong_so['sai_so']:.2f}%)
+                        - Độ tin cậy của đồ thị (R²): {thong_so['r2']:.1f}% 
+                        {du_lieu_bo_sung}
                         
-                        Yêu cầu RẤT QUAN TRỌNG:
-                        1. Lồng ghép khéo léo MỤC ĐÍCH THÍ NGHIỆM vào lời nhận xét. Phải chỉ ra cho học sinh thấy kết quả của các em (hình dáng đồ thị cong, phương trình bậc 2) đã phản ánh và kiểm chứng đúng các định luật vật lý như thế nào.
-                        2. Khen ngợi nếu sai số thấp (<10%), động viên và chỉ ra nguyên nhân sai số (lực cản không khí, góc máy quay chưa vuông góc mặt phẳng chuyển động).
-                        3. Xưng hô "cô" và "các em". Dùng giọng văn khích lệ, thấu hiểu, truyền cảm hứng và dùng emoji liên quan đến giáo dục.
-                        4. KHÔNG sử dụng định dạng toán học LaTeX (không dùng dấu $ hay \text). Viết đơn vị và công thức bằng văn bản bình thường (VD: m/s2).
+                        BAREM ĐÁNH GIÁ (TUYỆT ĐỐI TUÂN THỦ):
+                        1. Độ tin cậy đồ thị (R²): Nếu >95% hãy khen các em quay video mượt và thao tác chuẩn; nếu <90% nhắc nhở đồ thị bị nhiễu do quay rung tay hoặc vật bị che.
+                        2. Sai số gia tốc (g): Dưới 5% (Xuất sắc); 5-15% (Khá tốt, do lực cản không khí); >15% (Nhắc nhở kiểm tra lại góc quay camera bị lệch phối cảnh).
+                        3. Kiểm chứng định luật: 
+                           - Nếu là Rơi tự do/Ném ngang: Dựa vào v0y, nếu v0y > 0.5m/s thì nhắc học sinh lỗi "chưa buông tay tự nhiên mà lỡ ném vật".
+                           - Nếu là Ném ngang/xiên: Khen ngợi việc ghi lại được quỹ đạo parabol độc lập ngang-dọc. Phân tích thêm sự chênh lệch tầm cao thực tế và lý thuyết (nếu là ném xiên).
+                           
+                        Yêu cầu trình bày:
+                        - Dài khoảng 200 chữ. Xưng "cô" - "các em". Giọng văn chuyên môn, phân tích sắc sảo nhưng vẫn khích lệ, thân thiện, dùng emoji.
+                        - KHÔNG DÙNG LATEX ($ hay \text). Viết đơn vị bình thường (VD: m/s2, v0).
                         """
                         
                         response = model.generate_content([prompt, img_to_send])
                         
-                        st.markdown("### 🤖 3. Nhận xét từ cô Thi AI")
+                        st.markdown("### 🤖 3. Báo cáo Nhận xét từ cô Thi AI")
                         st.success(response.text)
                         
                     except KeyError:
