@@ -7,7 +7,7 @@ import os
 import google.generativeai as genai
 from PIL import Image
 
-# --- HÀM XỬ LÝ PHÂN TÍCH VIDEO ---
+# --- HÀM XỬ LÝ PHÂN TÍCH VIDEO VÀ BỘ LỌC QUỸ ĐẠO ---
 def phan_tich_video(video_path, chieu_cao_thuc_te):
     if video_path is None:
         return None, None, "Vui lòng tải lên một video!"
@@ -15,7 +15,7 @@ def phan_tich_video(video_path, chieu_cao_thuc_te):
         return None, None, "Chiều cao thực tế phải lớn hơn 0!"
 
     cap = cv2.VideoCapture(video_path)
-    toa_do_y, thoi_gian = [], []
+    toa_do_x, toa_do_y, thoi_gian = [], [], [] # Bổ sung mảng lưu tọa độ X
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
     frame_count = 0
     fgbg = cv2.createBackgroundSubtractorMOG2(detectShadows=False)
@@ -34,12 +34,32 @@ def phan_tich_video(video_path, chieu_cao_thuc_te):
             if cv2.contourArea(c) > 100:
                 ((x, y), radius) = cv2.minEnclosingCircle(c)
                 thoi_gian.append(frame_count / fps)
-                toa_do_y.append(y)
+                toa_do_x.append(x) # Lưu vết trục ngang
+                toa_do_y.append(y) # Lưu vết trục dọc
         frame_count += 1
     cap.release()
 
-    if len(toa_do_y) < 3:
-        return None, None, "AI không tìm thấy vật thể rơi rõ ràng. Hãy thử lại video khác!"
+    if len(toa_do_y) < 5:
+        return None, None, "AI không tìm thấy vật thể chuyển động rõ ràng. Hãy thử lại video khác!"
+
+    # --- BỘ LỌC KIỂM TRA ĐIỀU KIỆN RƠI TỰ DO ---
+    do_lech_x = max(toa_do_x) - min(toa_do_x)
+    do_roi_y = max(toa_do_y) - min(toa_do_y)
+
+    if do_roi_y < 50:
+        return None, None, "❌ Độ rơi quá ngắn hoặc vật thể gần như đứng im, không đủ dữ liệu để phân tích vật lý!"
+    
+    # Nếu độ lệch ngang lớn hơn 40% độ rơi dọc -> Không phải rơi thẳng đứng
+    if do_lech_x > do_roi_y * 0.4:
+        return None, None, "❌ AI phát hiện vật thể bị ném ngang hoặc di chuyển lộn xộn! Yêu cầu tải lên đúng video thả rơi tự do thẳng đứng."
+
+    # Kiểm tra chiều rơi (Trong xử lý ảnh, trục y hướng xuống dưới. Nên nếu y giảm tức là vật bay lên)
+    nua_thoi_gian = len(toa_do_y) // 2
+    y_dau = np.mean(toa_do_y[:nua_thoi_gian])
+    y_cuoi = np.mean(toa_do_y[nua_thoi_gian:])
+    if y_dau > y_cuoi:
+         return None, None, "❌ Vật thể đang di chuyển bay lên trên! Thí nghiệm rơi tự do yêu cầu buông tay cho vật rơi xuống."
+    # ---------------------------------------------
 
     # Vẽ đồ thị
     plt.figure(figsize=(8, 4))
@@ -56,9 +76,8 @@ def phan_tich_video(video_path, chieu_cao_thuc_te):
     plt.close()
 
     # Tính toán thông số
-    do_roi_pixel = max(toa_do_y) - min(toa_do_y)
-    if do_roi_pixel == 0: do_roi_pixel = 1
-    ti_le_pixel_met = chieu_cao_thuc_te / do_roi_pixel
+    if do_roi_y == 0: do_roi_y = 1
+    ti_le_pixel_met = chieu_cao_thuc_te / do_roi_y
     toa_do_y_met = [y * ti_le_pixel_met for y in toa_do_y]
 
     he_so = np.polyfit(thoi_gian, toa_do_y_met, 2)
@@ -79,88 +98,23 @@ def phan_tich_video(video_path, chieu_cao_thuc_te):
 # --- GIAO DIỆN WEB TỐI ƯU HÓA MOBILE & MÁY TÍNH ---
 st.set_page_config(page_title="PHYSIX - Phân tích thí nghiệm", layout="wide")
 
-# Nhúng Custom CSS để phóng to chữ, đổi màu nút và thêm emoji chuyển động
 st.markdown("""
 <style>
-    /* Phóng to toàn bộ cỡ chữ cơ bản */
-    html, body, [class*="css"] {
-        font-size: 1.15rem !important;
-    }
-    
-    /* Làm nổi bật tiêu đề lớn và thêm hoạt ảnh */
-    .title-physix {
-        font-size: 2.2rem !important;
-        font-weight: 800;
-        color: #FF4B4B;
-        text-align: center;
-        margin-bottom: 5px;
-    }
-    
-    /* Thiết kế nút bấm siêu lớn, dễ chạm trên điện thoại */
-    div.stButton > button {
-        font-size: 1.3rem !important;
-        font-weight: bold !important;
-        padding: 0.8rem 1.5rem !important;
-        border-radius: 12px !important;
-        background-color: #FF4B4B !important;
-        color: white !important;
-        border: none !important;
-        width: 100% !important;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        transition: transform 0.1s;
-    }
-    div.stButton > button:active {
-        transform: scale(0.98);
-    }
-    
-    /* Phóng to các nhãn nhập liệu */
-    .stMarkdown p, label {
-        font-size: 1.1rem !important;
-        font-weight: 600 !important;
-    }
-
-    /* Hiệu ứng hoạt ảnh Emoji xoay tròn và rơi tự do */
-    @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-    }
-    @keyframes fall {
-        0% { transform: translateY(-5px); }
-        50% { transform: translateY(5px); }
-        100% { transform: translateY(-5px); }
-    }
-    @keyframes launch {
-        0% { transform: translateY(0) scale(1); }
-        50% { transform: translateY(-3px) scale(1.05); }
-        100% { transform: translateY(0) scale(1); }
-    }
-
-    .emoji-spin {
-        display: inline-block;
-        animation: spin 4s linear infinite;
-    }
-    .emoji-fall {
-        display: inline-block;
-        animation: fall 2s ease-in-out infinite;
-    }
-    .emoji-launch {
-        display: inline-block;
-        animation: launch 1.5s ease-in-out infinite;
-    }
-    
-    /* Giao diện khung kết quả nổi bật */
-    .result-box {
-        background-color: #f0f7f4;
-        border-left: 5px solid #2e7d32;
-        padding: 15px;
-        border-radius: 8px;
-        font-size: 1.15rem !important;
-        line-height: 1.6;
-    }
+    html, body, [class*="css"] { font-size: 1.15rem !important; }
+    .title-physix { font-size: 2.2rem !important; font-weight: 800; color: #FF4B4B; text-align: center; margin-bottom: 5px; }
+    div.stButton > button { font-size: 1.3rem !important; font-weight: bold !important; padding: 0.8rem 1.5rem !important; border-radius: 12px !important; background-color: #FF4B4B !important; color: white !important; border: none !important; width: 100% !important; box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: transform 0.1s; }
+    div.stButton > button:active { transform: scale(0.98); }
+    .stMarkdown p, label { font-size: 1.1rem !important; font-weight: 600 !important; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    @keyframes fall { 0% { transform: translateY(-5px); } 50% { transform: translateY(5px); } 100% { transform: translateY(-5px); } }
+    @keyframes launch { 0% { transform: translateY(0) scale(1); } 50% { transform: translateY(-3px) scale(1.05); } 100% { transform: translateY(0) scale(1); } }
+    .emoji-spin { display: inline-block; animation: spin 4s linear infinite; }
+    .emoji-fall { display: inline-block; animation: fall 2s ease-in-out infinite; }
+    .emoji-launch { display: inline-block; animation: launch 1.5s ease-in-out infinite; }
+    .result-box { background-color: #f0f7f4; border-left: 5px solid #2e7d32; padding: 15px; border-radius: 8px; font-size: 1.15rem !important; line-height: 1.6; }
 </style>
 """, unsafe_allow_html=True)
 
-# Tiêu đề lớn có chèn emoji động
 st.markdown("""
 <div class='title-physix'>
     <span class='emoji-launch'>🚀</span> PHYSIX - NỀN TẢNG AI PHÂN TÍCH VẬT LÝ
@@ -170,7 +124,6 @@ st.markdown("""
 </p>
 """, unsafe_allow_html=True)
 
-# Streamlit sẽ tự động biến 2 cột này thành 1 cột dọc trên điện thoại để vừa khít màn hình
 col1, col2 = st.columns([1, 1.1])
 
 with col1:
@@ -188,7 +141,6 @@ with col2:
                 tfile.write(video_dau_vao.read())
                 temp_video_path = tfile.name
 
-            # Thông báo tải lớn, rõ ràng kèm emoji xoay tròn
             with st.spinner('⏳ Đang xử lý video từng khung hình & kết nối với cô Thi AI...'):
                 anh_do_thi, thong_so, loi = phan_tich_video(temp_video_path, chieu_cao_input)
 
@@ -202,8 +154,8 @@ with col2:
                         api_key_an = st.secrets["GEMINI_API_KEY"]
                         genai.configure(api_key=api_key_an)
                         
-                        # Sử dụng thẳng gemini-2.5-flash để phản hồi cực nhanh
-                        ten_model_phu_hop = 'models/gemini-2.5-flash'
+                        # Đã cập nhật thành mô hình tốc độ siêu nhanh
+                        ten_model_phu_hop = 'models/gemini-3.5-flash-lite'
                         model = genai.GenerativeModel(ten_model_phu_hop)
                         img_to_send = Image.open(anh_do_thi)
                         
@@ -224,7 +176,6 @@ with col2:
                         response = model.generate_content([prompt, img_to_send])
                         
                         st.markdown("### 🤖 3. Nhận xét từ cô Thi AI")
-                        # Đưa văn bản nhận xét vào khung lớn đặc biệt
                         st.markdown(f"""
                         <div class='result-box'>
                             {response.text.replace('\n', '<br>')}
