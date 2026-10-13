@@ -7,7 +7,7 @@ import os
 import google.generativeai as genai
 from PIL import Image
 
-# --- HÀM XỬ LÝ PHÂN TÍCH ĐA ĐỘNG HỌC ---
+# --- HÀM XỬ LÝ PHÂN TÍCH ĐA ĐỘNG HỌC (NÂNG CẤP NHẬN DIỆN MÀU SẮC) ---
 def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
     if video_path is None:
         return None, None, "Vui lòng tải lên một video!"
@@ -18,20 +18,30 @@ def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
     toa_do_x, toa_do_y, thoi_gian = [], [], []
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
     frame_count = 0
-    fgbg = cv2.createBackgroundSubtractorMOG2(detectShadows=False)
+
+    # Lọc màu vàng (HSV) để tránh nhiễu từ người và giá đỡ
+    lower_yellow = np.array([20, 100, 100])
+    upper_yellow = np.array([30, 255, 255])
 
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret: break
 
-        fgmask = fgbg.apply(frame)
-        fgmask = cv2.erode(fgmask, None, iterations=2)
-        fgmask = cv2.dilate(fgmask, None, iterations=2)
-        contours, _ = cv2.findContours(fgmask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Chuyển đổi khung hình sang không gian màu HSV
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        
+        # Tạo mặt nạ chỉ lấy những vùng có màu vàng
+        mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
+        
+        # Khử nhiễu
+        mask = cv2.erode(mask, None, iterations=2)
+        mask = cv2.dilate(mask, None, iterations=2)
+        
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         if contours:
             c = max(contours, key=cv2.contourArea)
-            if cv2.contourArea(c) > 100:
+            if cv2.contourArea(c) > 50: # Giảm ngưỡng diện tích để bắt bóng tốt hơn
                 ((x, y), radius) = cv2.minEnclosingCircle(c)
                 thoi_gian.append(frame_count / fps)
                 toa_do_x.append(x)
@@ -40,7 +50,7 @@ def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
     cap.release()
 
     if len(toa_do_y) < 5:
-        return None, None, "AI không tìm thấy vật thể chuyển động rõ ràng. Hãy thử quay video ở góc sáng hơn!"
+        return None, None, "AI không tìm thấy quả bóng màu vàng. Vui lòng đảm bảo vật thể thả rơi có màu vàng nổi bật!"
 
     # --- BỘ LỌC ĐỘNG HỌC THEO LOẠI CHUYỂN ĐỘNG ---
     do_lech_x = max(toa_do_x) - min(toa_do_x)
@@ -60,7 +70,6 @@ def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
     toa_do_y_met = [(y - min(toa_do_y)) * ti_le_pixel_met for y in toa_do_y]
     toa_do_x_met = [(x - min(toa_do_x)) * ti_le_pixel_met for x in toa_do_x]
 
-    # Tính toán trục Y (Gia tốc trọng trường)
     he_so_y = np.polyfit(thoi_gian, toa_do_y_met, 2)
     ay, by, cy = he_so_y[0], he_so_y[1], he_so_y[2]
     g_do_duoc = 2 * ay
@@ -73,9 +82,8 @@ def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
         "sai_so": sai_so
     }
 
-    # Tính toán trục X cho ném ngang/ném xiên
     if loai_chuyen_dong in ["Ném ngang", "Ném xiên"]:
-        he_so_x = np.polyfit(thoi_gian, toa_do_x_met, 1) # x = vt
+        he_so_x = np.polyfit(thoi_gian, toa_do_x_met, 1)
         thong_so_tho["phuong_trinh_x"] = f"x = {he_so_x[0]:.2f}t"
         thong_so_tho["vx"] = he_so_x[0]
 
@@ -92,7 +100,7 @@ def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
         plt.xlabel('Tọa độ x (m)')
         plt.ylabel('Tọa độ y (m)')
         
-    plt.gca().invert_yaxis() # OpenCV trục y hướng xuống
+    plt.gca().invert_yaxis()
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.legend()
     temp_img = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
@@ -100,7 +108,6 @@ def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
     plt.close()
 
     return temp_img.name, thong_so_tho, None
-
 
 # --- GIAO DIỆN WEB ---
 st.set_page_config(page_title="PHYSIX - Phân tích thí nghiệm", layout="wide")
@@ -134,7 +141,6 @@ col1, col2 = st.columns([1, 1.1])
 
 with col1:
     st.markdown("### 📥 1. Thiết lập bài thực hành")
-    # Tích hợp thêm lựa chọn chuyển động
     loai_chuyen_dong = st.radio("Chọn dạng chuyển động:", ["Rơi tự do", "Ném ngang", "Ném xiên"], horizontal=True)
     video_dau_vao = st.file_uploader(f"Tải video thí nghiệm ({loai_chuyen_dong})", type=['mp4', 'mov', 'avi'])
     chieu_cao_input = st.number_input("Nhập chiều cao max quỹ đạo thực tế (mét)", value=1.5, step=0.1)
@@ -166,7 +172,6 @@ with col2:
                         model = genai.GenerativeModel(ten_model_phu_hop)
                         img_to_send = Image.open(anh_do_thi)
                         
-                        # Cập nhật linh hoạt câu lệnh Prompt theo dạng chuyển động
                         thong_so_x_txt = f"\n- Phương trình trục Ox: {thong_so.get('phuong_trinh_x', 'Không có')}" if loai_chuyen_dong != "Rơi tự do" else ""
                         
                         prompt = f"""
