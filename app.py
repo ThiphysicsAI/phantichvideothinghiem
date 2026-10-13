@@ -7,7 +7,7 @@ import os
 import google.generativeai as genai
 from PIL import Image
 
-# --- HÀM XỬ LÝ PHÂN TÍCH ĐA ĐỘNG HỌC (LÕI THỊ GIÁC AI) ---
+# --- HÀM XỬ LÝ PHÂN TÍCH ĐA ĐỘNG HỌC ---
 def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
     if video_path is None:
         return None, None, "Vui lòng tải lên một video!"
@@ -61,6 +61,19 @@ def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
 
     if len(toa_do_y) < 5:
         return None, None, "AI không tìm thấy quỹ đạo rõ ràng! Đảm bảo quả bóng không bị che khuất và có màu nổi bật so với phông nền."
+
+    # --- BỘ LỌC CẮT BỎ ĐOẠN BÓNG NẢY (BOUNCE FILTER) ---
+    # Tìm điểm chạm đất (giá trị Y lớn nhất do trục Y hướng xuống)
+    diem_cham_dat_idx = np.argmax(toa_do_y)
+    
+    # Chỉ giữ lại dữ liệu từ lúc bắt đầu chuyển động đến khi chạm đất
+    toa_do_y = toa_do_y[:diem_cham_dat_idx + 1]
+    toa_do_x = toa_do_x[:diem_cham_dat_idx + 1]
+    thoi_gian = thoi_gian[:diem_cham_dat_idx + 1]
+
+    if len(toa_do_y) < 5:
+         return None, None, "❌ Chuyển động trước khi chạm mặt phẳng quá ngắn, không đủ dữ liệu để vẽ phương trình quỹ đạo!"
+    # ----------------------------------------------------
 
     # --- BỘ LỌC ĐỘNG HỌC THEO LOẠI CHUYỂN ĐỘNG ---
     do_lech_x = max(toa_do_x) - min(toa_do_x)
@@ -119,7 +132,7 @@ def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
 
     return temp_img.name, thong_so_tho, None
 
-# --- GIAO DIỆN WEB TỐI ƯU HÓA MOBILE & MÁY TÍNH ---
+# --- GIAO DIỆN WEB ---
 st.set_page_config(page_title="PHYSIX - Phân tích thí nghiệm", layout="wide")
 
 st.markdown("""
@@ -182,7 +195,6 @@ with col2:
                         model = genai.GenerativeModel(ten_model_phu_hop)
                         img_to_send = Image.open(anh_do_thi)
                         
-                        # --- TÍCH HỢP MỤC ĐÍCH SƯ PHẠM VÀO AI ---
                         muc_dich_thi_nghiem = ""
                         if loai_chuyen_dong == "Rơi tự do":
                             muc_dich_thi_nghiem = """
