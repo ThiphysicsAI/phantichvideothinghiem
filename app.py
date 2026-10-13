@@ -7,7 +7,7 @@ import os
 import google.generativeai as genai
 from PIL import Image
 
-# --- HÀM XỬ LÝ PHÂN TÍCH ĐA ĐỘNG HỌC (NÂNG CẤP NHẬN DIỆN MÀU SẮC) ---
+# --- HÀM XỬ LÝ PHÂN TÍCH ĐA ĐỘNG HỌC (LÕI THỊ GIÁC AI NÂNG CẤP) ---
 def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
     if video_path is None:
         return None, None, "Vui lòng tải lên một video!"
@@ -18,39 +18,53 @@ def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
     toa_do_x, toa_do_y, thoi_gian = [], [], []
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
     frame_count = 0
+    fgbg = cv2.createBackgroundSubtractorMOG2(detectShadows=False)
 
-    # Lọc màu vàng (HSV) để tránh nhiễu từ người và giá đỡ
-    lower_yellow = np.array([20, 100, 100])
-    upper_yellow = np.array([30, 255, 255])
+    prev_x, prev_y = None, None
 
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret: break
 
-        # Chuyển đổi khung hình sang không gian màu HSV
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        
-        # Tạo mặt nạ chỉ lấy những vùng có màu vàng
-        mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
-        
-        # Khử nhiễu
-        mask = cv2.erode(mask, None, iterations=2)
-        mask = cv2.dilate(mask, None, iterations=2)
-        
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        fgmask = fgbg.apply(frame)
+        fgmask = cv2.erode(fgmask, None, iterations=2)
+        fgmask = cv2.dilate(fgmask, None, iterations=2)
+        contours, _ = cv2.findContours(fgmask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        if contours:
-            c = max(contours, key=cv2.contourArea)
-            if cv2.contourArea(c) > 50: # Giảm ngưỡng diện tích để bắt bóng tốt hơn
-                ((x, y), radius) = cv2.minEnclosingCircle(c)
-                thoi_gian.append(frame_count / fps)
-                toa_do_x.append(x)
-                toa_do_y.append(y)
+        valid_contours = []
+        for c in contours:
+            area = cv2.contourArea(c)
+            # LỌC 1: Bỏ qua nhiễu nhỏ (<80) và vật thể khổng lồ như người, cánh tay (>3000)
+            if 80 < area < 3000:
+                peri = cv2.arcLength(c, True)
+                if peri > 0:
+                    circularity = 4 * np.pi * area / (peri * peri)
+                    # LỌC 2: Độ tròn trịa. Bóng rơi có độ tròn > 0.4, loại bỏ các vệt dài
+                    if circularity > 0.4:
+                        valid_contours.append(c)
+
+        if valid_contours:
+            # Nếu có nhiều vật thể tròn nhỏ, lấy vật thể lớn nhất trong số đó
+            c = max(valid_contours, key=cv2.contourArea)
+            ((x, y), radius) = cv2.minEnclosingCircle(c)
+            
+            # LỌC 3: Tính liên tục. Quả bóng không thể dịch chuyển tức thời quá 150 pixel/khung hình
+            if prev_x is not None and prev_y is not None:
+                dist = np.sqrt((x - prev_x)**2 + (y - prev_y)**2)
+                if dist > 150:
+                    frame_count += 1
+                    continue # Bỏ qua điểm nhảy vọt này
+
+            thoi_gian.append(frame_count / fps)
+            toa_do_x.append(x)
+            toa_do_y.append(y)
+            prev_x, prev_y = x, y
+            
         frame_count += 1
     cap.release()
 
     if len(toa_do_y) < 5:
-        return None, None, "AI không tìm thấy quả bóng màu vàng. Vui lòng đảm bảo vật thể thả rơi có màu vàng nổi bật!"
+        return None, None, "AI không tìm thấy quỹ đạo rõ ràng! Đảm bảo quả bóng không bị che khuất và có màu nổi bật so với phông nền."
 
     # --- BỘ LỌC ĐỘNG HỌC THEO LOẠI CHUYỂN ĐỘNG ---
     do_lech_x = max(toa_do_x) - min(toa_do_x)
@@ -70,6 +84,7 @@ def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
     toa_do_y_met = [(y - min(toa_do_y)) * ti_le_pixel_met for y in toa_do_y]
     toa_do_x_met = [(x - min(toa_do_x)) * ti_le_pixel_met for x in toa_do_x]
 
+    # Cắt bỏ những điểm nhiễu đầu/cuối mảng nếu có bằng nội suy đơn giản
     he_so_y = np.polyfit(thoi_gian, toa_do_y_met, 2)
     ay, by, cy = he_so_y[0], he_so_y[1], he_so_y[2]
     g_do_duoc = 2 * ay
@@ -109,7 +124,7 @@ def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
 
     return temp_img.name, thong_so_tho, None
 
-# --- GIAO DIỆN WEB ---
+# --- GIAO DIỆN WEB TỐI ƯU HÓA MOBILE & MÁY TÍNH ---
 st.set_page_config(page_title="PHYSIX - Phân tích thí nghiệm", layout="wide")
 
 st.markdown("""
