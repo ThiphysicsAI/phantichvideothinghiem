@@ -7,8 +7,8 @@ import os
 import google.generativeai as genai
 from PIL import Image
 
-# --- HÀM XỬ LÝ PHÂN TÍCH VIDEO VÀ BỘ LỌC QUỸ ĐẠO ---
-def phan_tich_video(video_path, chieu_cao_thuc_te):
+# --- HÀM XỬ LÝ PHÂN TÍCH ĐA ĐỘNG HỌC ---
+def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
     if video_path is None:
         return None, None, "Vui lòng tải lên một video!"
     if chieu_cao_thuc_te <= 0:
@@ -40,59 +40,69 @@ def phan_tich_video(video_path, chieu_cao_thuc_te):
     cap.release()
 
     if len(toa_do_y) < 5:
-        return None, None, "AI không tìm thấy vật thể chuyển động rõ ràng. Hãy thử lại video khác!"
+        return None, None, "AI không tìm thấy vật thể chuyển động rõ ràng. Hãy thử quay video ở góc sáng hơn!"
 
-    # --- BỘ LỌC KIỂM TRA ĐIỀU KIỆN RƠI TỰ DO ---
+    # --- BỘ LỌC ĐỘNG HỌC THEO LOẠI CHUYỂN ĐỘNG ---
     do_lech_x = max(toa_do_x) - min(toa_do_x)
     do_roi_y = max(toa_do_y) - min(toa_do_y)
-
-    if do_roi_y < 50:
-        return None, None, "❌ Độ rơi quá ngắn hoặc vật thể gần như đứng im, không đủ dữ liệu để phân tích vật lý!"
-    
-    if do_lech_x > do_roi_y * 0.4:
-        return None, None, "❌ AI phát hiện vật thể bị ném ngang hoặc di chuyển lộn xộn! Yêu cầu tải lên đúng video thả rơi tự do thẳng đứng."
-
-    nua_thoi_gian = len(toa_do_y) // 2
-    y_dau = np.mean(toa_do_y[:nua_thoi_gian])
-    y_cuoi = np.mean(toa_do_y[nua_thoi_gian:])
-    if y_dau > y_cuoi:
-         return None, None, "❌ Vật thể đang di chuyển bay lên trên! Thí nghiệm rơi tự do yêu cầu buông tay cho vật rơi xuống."
-    # ---------------------------------------------
-
-    # Vẽ đồ thị
-    plt.figure(figsize=(8, 4))
-    plt.plot(thoi_gian, toa_do_y, 'ro-', markersize=4, label='Tọa độ vật')
-    plt.gca().invert_yaxis()
-    plt.title('Đồ thị Tọa độ y - Thời gian t (Rơi tự do)')
-    plt.xlabel('Thời gian t (giây)')
-    plt.ylabel('Tọa độ y (pixel)')
-    plt.grid(True, linestyle='--', alpha=0.6)
-    plt.legend()
-
-    temp_img = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
-    plt.savefig(temp_img.name, bbox_inches='tight')
-    plt.close()
-
-    # Tính toán thông số
     if do_roi_y == 0: do_roi_y = 1
-    ti_le_pixel_met = chieu_cao_thuc_te / do_roi_y
-    toa_do_y_met = [y * ti_le_pixel_met for y in toa_do_y]
+    if do_lech_x == 0: do_lech_x = 1
 
-    he_so = np.polyfit(thoi_gian, toa_do_y_met, 2)
-    a, b, c_coef = he_so[0], he_so[1], he_so[2]
-    g_do_duoc = 2 * a
+    if loai_chuyen_dong == "Rơi tự do":
+        if do_lech_x > do_roi_y * 0.4:
+            return None, None, "❌ Chế độ Rơi tự do: Cảnh báo vật thể bị ném ngang. Các em hãy chọn đúng chế độ hoặc thả lại video!"
+    elif loai_chuyen_dong in ["Ném ngang", "Ném xiên"]:
+        if do_lech_x < do_roi_y * 0.15:
+            return None, None, f"❌ Chế độ {loai_chuyen_dong}: Quỹ đạo quá thẳng đứng, giống rơi tự do hơn. Các em kiểm tra lại nhé!"
+
+    # --- QUY ĐỔI HỆ QUY CHIẾU & TÍNH TOÁN ---
+    ti_le_pixel_met = chieu_cao_thuc_te / do_roi_y
+    toa_do_y_met = [(y - min(toa_do_y)) * ti_le_pixel_met for y in toa_do_y]
+    toa_do_x_met = [(x - min(toa_do_x)) * ti_le_pixel_met for x in toa_do_x]
+
+    # Tính toán trục Y (Gia tốc trọng trường)
+    he_so_y = np.polyfit(thoi_gian, toa_do_y_met, 2)
+    ay, by, cy = he_so_y[0], he_so_y[1], he_so_y[2]
+    g_do_duoc = 2 * ay
     sai_so = abs(g_do_duoc - 9.8) / 9.8 * 100
 
     thong_so_tho = {
-        "phuong_trinh": f"y = {a:.2f}t² + {b:.2f}t + {c_coef:.2f}",
-        "v0": b,
+        "loai": loai_chuyen_dong,
+        "phuong_trinh_y": f"y = {ay:.2f}t² + {by:.2f}t + {cy:.2f}",
         "g": g_do_duoc,
         "sai_so": sai_so
     }
 
+    # Tính toán trục X cho ném ngang/ném xiên
+    if loai_chuyen_dong in ["Ném ngang", "Ném xiên"]:
+        he_so_x = np.polyfit(thoi_gian, toa_do_x_met, 1) # x = vt
+        thong_so_tho["phuong_trinh_x"] = f"x = {he_so_x[0]:.2f}t"
+        thong_so_tho["vx"] = he_so_x[0]
+
+    # --- VẼ ĐỒ THỊ ---
+    plt.figure(figsize=(8, 4))
+    if loai_chuyen_dong == "Rơi tự do":
+        plt.plot(thoi_gian, toa_do_y_met, 'ro-', markersize=4, label='Tọa độ y theo t')
+        plt.title('Đồ thị Động học (Rơi tự do)')
+        plt.xlabel('Thời gian t (giây)')
+        plt.ylabel('Độ dịch chuyển y (m)')
+    else:
+        plt.plot(toa_do_x_met, toa_do_y_met, 'bo-', markersize=4, label='Quỹ đạo Parabol')
+        plt.title(f'Đồ thị Quỹ đạo x-y ({loai_chuyen_dong})')
+        plt.xlabel('Tọa độ x (m)')
+        plt.ylabel('Tọa độ y (m)')
+        
+    plt.gca().invert_yaxis() # OpenCV trục y hướng xuống
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.legend()
+    temp_img = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+    plt.savefig(temp_img.name, bbox_inches='tight')
+    plt.close()
+
     return temp_img.name, thong_so_tho, None
 
-# --- GIAO DIỆN WEB TỐI ƯU HÓA MOBILE & MÁY TÍNH ---
+
+# --- GIAO DIỆN WEB ---
 st.set_page_config(page_title="PHYSIX - Phân tích thí nghiệm", layout="wide")
 
 st.markdown("""
@@ -116,16 +126,18 @@ st.markdown("""
     <span class='emoji-launch'>🚀</span> PHYSIX - NỀN TẢNG AI PHÂN TÍCH VẬT LÝ
 </div>
 <p style='text-align: center; font-size: 1.2rem; color: #555; margin-bottom: 25px;'>
-    Hãy tải video thả rơi tự do để "trợ lý AI" của cô Thi giúp các em phân tích nhé! <span class='emoji-fall'>🍎</span><span class='emoji-spin'>🪐</span>
+    Hãy chọn loại chuyển động và tải video lên để trợ lý AI phân tích nhé! <span class='emoji-fall'>🍎</span><span class='emoji-spin'>🪐</span>
 </p>
 """, unsafe_allow_html=True)
 
 col1, col2 = st.columns([1, 1.1])
 
 with col1:
-    st.markdown("### 📥 1. Tải lên bài làm")
-    video_dau_vao = st.file_uploader("Tải file video thí nghiệm (mp4, mov, avi)", type=['mp4', 'mov', 'avi'])
-    chieu_cao_input = st.number_input("Nhập chiều cao thả rơi thực tế (mét)", value=1.5, step=0.1)
+    st.markdown("### 📥 1. Thiết lập bài thực hành")
+    # Tích hợp thêm lựa chọn chuyển động
+    loai_chuyen_dong = st.radio("Chọn dạng chuyển động:", ["Rơi tự do", "Ném ngang", "Ném xiên"], horizontal=True)
+    video_dau_vao = st.file_uploader(f"Tải video thí nghiệm ({loai_chuyen_dong})", type=['mp4', 'mov', 'avi'])
+    chieu_cao_input = st.number_input("Nhập chiều cao max quỹ đạo thực tế (mét)", value=1.5, step=0.1)
     
     st.markdown("<br>", unsafe_allow_html=True)
     nut_phan_tich = st.button("✨ PHÂN TÍCH & NHẬN XÉT BẰNG AI ✨", use_container_width=True)
@@ -137,14 +149,14 @@ with col2:
                 tfile.write(video_dau_vao.read())
                 temp_video_path = tfile.name
 
-            with st.spinner('⏳ Đang xử lý video từng khung hình & kết nối với cô Thi AI...'):
-                anh_do_thi, thong_so, loi = phan_tich_video(temp_video_path, chieu_cao_input)
+            with st.spinner('⏳ Đang xử lý video từng khung hình & kết nối với trợ lý AI...'):
+                anh_do_thi, thong_so, loi = phan_tich_video(temp_video_path, chieu_cao_input, loai_chuyen_dong)
 
                 if loi:
                     st.error(loi)
                 else:
                     st.markdown("### 📊 2. Kết quả & Đồ thị")
-                    st.image(anh_do_thi, caption="Đồ thị Động học trích xuất từ video của em", use_container_width=True)
+                    st.image(anh_do_thi, caption=f"Đồ thị trích xuất từ video: {loai_chuyen_dong}", use_container_width=True)
                     
                     try:
                         api_key_an = st.secrets["GEMINI_API_KEY"]
@@ -154,29 +166,31 @@ with col2:
                         model = genai.GenerativeModel(ten_model_phu_hop)
                         img_to_send = Image.open(anh_do_thi)
                         
+                        # Cập nhật linh hoạt câu lệnh Prompt theo dạng chuyển động
+                        thong_so_x_txt = f"\n- Phương trình trục Ox: {thong_so.get('phuong_trinh_x', 'Không có')}" if loai_chuyen_dong != "Rơi tự do" else ""
+                        
                         prompt = f"""
                         Bạn là một giáo viên Vật lí cấp 3 tâm huyết, thân thiện tên là cô Thi.
-                        Học sinh vừa làm xong thí nghiệm thả rơi tự do vật thể.
-                        Dựa vào bức ảnh đồ thị y-t đính kèm và các số liệu đo được dưới đây, hãy viết một lời nhận xét ngắn gọn (khoảng 150 chữ) gửi trực tiếp cho học sinh.
-                        - Phương trình chuyển động: {thong_so['phuong_trinh']}
-                        - Vận tốc ban đầu v0: {thong_so['v0']:.2f} m/s
-                        - Gia tốc g đo được: {thong_so['g']:.2f} m/s²
+                        Học sinh vừa làm xong thí nghiệm {thong_so['loai']} vật thể.
+                        Dựa vào bức ảnh đồ thị đính kèm và các số liệu đo được dưới đây, hãy viết một lời nhận xét ngắn gọn (khoảng 150 chữ) gửi trực tiếp cho học sinh.
+                        - Phương trình trục Oy: {thong_so['phuong_trinh_y']}{thong_so_x_txt}
+                        - Gia tốc g đo được (từ Oy): {thong_so['g']:.2f} m/s²
                         - Sai số so với g chuẩn (9.8): {thong_so['sai_so']:.2f}%
                         
                         Yêu cầu:
-                        - Khen ngợi nếu sai số thấp (<10%), động viên và chỉ ra nguyên nhân (vận tốc đầu khác 0 do lực ném tay, lực cản không khí, góc quay camera) nếu sai số cao.
+                        - Khen ngợi nếu sai số thấp (<10%), động viên và chỉ ra nguyên nhân sai số (lực cản không khí, góc máy quay chưa vuông góc mặt phẳng chuyển động).
+                        - Nếu là Ném ngang/Ném xiên, hãy khen quỹ đạo Parabol các em ghi lại được.
                         - Xưng hô "cô" và "các em". Dùng giọng văn khích lệ, thấu hiểu và thật nhiều emoji liên quan đến trường học, vật lý.
-                        - QUAN TRỌNG: KHÔNG sử dụng định dạng toán học LaTeX (không dùng dấu $ hay \text). Viết đơn vị và công thức bằng văn bản bình thường (ví dụ: m/s2, v0, y = 5t^2).
+                        - QUAN TRỌNG: KHÔNG sử dụng định dạng toán học LaTeX (không dùng dấu $ hay \text). Viết đơn vị và công thức bằng văn bản bình thường.
                         """
                         
                         response = model.generate_content([prompt, img_to_send])
                         
                         st.markdown("### 🤖 3. Nhận xét từ cô Thi AI")
-                        # Sử dụng st.success để tự động tạo khung xanh lá và render văn bản mượt mà
                         st.success(response.text)
                         
                     except KeyError:
-                        st.error("Lỗi: Không tìm thấy GEMINI_API_KEY. Hãy kiểm tra lại phần cài đặt Secrets trên Streamlit Cloud.")
+                        st.error("Lỗi: Không tìm thấy GEMINI_API_KEY trong cấu hình.")
                     except Exception as e:
                         st.error(f"Lỗi khi kết nối với Gemini: {e}")
 
