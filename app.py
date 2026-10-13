@@ -87,7 +87,7 @@ def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
 
     thong_so_tho = {
         "loai": loai_chuyen_dong,
-        "phuong_trinh_y": f"y = {ay:.2f}t² + {b:.2f}t + {cy:.2f}",
+        "phuong_trinh_y": f"y = {ay:.2f}t² + {by:.2f}t + {cy:.2f}",
         "g": g_do_duoc,
         "sai_so": sai_so
     }
@@ -212,4 +212,19 @@ with col2:
                         1. Lồng ghép khéo léo MỤC ĐÍCH THÍ NGHIỆM vào lời nhận xét. Phải chỉ ra cho học sinh thấy kết quả của các em (hình dáng đồ thị cong, phương trình bậc 2) đã phản ánh và kiểm chứng đúng các định luật vật lý như thế nào.
                         2. Khen ngợi nếu sai số thấp (<10%), động viên và chỉ ra nguyên nhân sai số (lực cản không khí, góc máy quay chưa vuông góc mặt phẳng chuyển động).
                         3. Xưng hô "cô" và "các em". Dùng giọng văn khích lệ, thấu hiểu, truyền cảm hứng và dùng emoji liên quan đến giáo dục.
-                        4. KHÔNG sử dụng định dạng
+                        4. KHÔNG sử dụng định dạng toán học LaTeX (không dùng dấu $ hay \text). Viết đơn vị và công thức bằng văn bản bình thường (VD: m/s2).
+                        """
+                        
+                        response = model.generate_content([prompt, img_to_send])
+                        
+                        st.markdown("### 🤖 3. Nhận xét từ cô Thi AI")
+                        st.success(response.text)
+                        
+                    except KeyError:
+                        st.error("Lỗi: Không tìm thấy GEMINI_API_KEY trong cấu hình.")
+                    except Exception as e:
+                        st.error(f"Lỗi khi kết nối với Gemini: {e}")
+
+            os.remove(temp_video_path)
+        else:
+            st.warning("⚠️ Vui lòng tải lên một video trước!")
