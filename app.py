@@ -7,7 +7,7 @@ import os
 import google.generativeai as genai
 from PIL import Image
 
-# --- HÀM XỬ LÝ PHÂN TÍCH ĐA ĐỘNG HỌC (LÕI THỊ GIÁC AI NÂNG CẤP) ---
+# --- HÀM XỬ LÝ PHÂN TÍCH ĐA ĐỘNG HỌC (LÕI THỊ GIÁC AI) ---
 def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
     if video_path is None:
         return None, None, "Vui lòng tải lên một video!"
@@ -34,26 +34,22 @@ def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
         valid_contours = []
         for c in contours:
             area = cv2.contourArea(c)
-            # LỌC 1: Bỏ qua nhiễu nhỏ (<80) và vật thể khổng lồ như người, cánh tay (>3000)
             if 80 < area < 3000:
                 peri = cv2.arcLength(c, True)
                 if peri > 0:
                     circularity = 4 * np.pi * area / (peri * peri)
-                    # LỌC 2: Độ tròn trịa. Bóng rơi có độ tròn > 0.4, loại bỏ các vệt dài
                     if circularity > 0.4:
                         valid_contours.append(c)
 
         if valid_contours:
-            # Nếu có nhiều vật thể tròn nhỏ, lấy vật thể lớn nhất trong số đó
             c = max(valid_contours, key=cv2.contourArea)
             ((x, y), radius) = cv2.minEnclosingCircle(c)
             
-            # LỌC 3: Tính liên tục. Quả bóng không thể dịch chuyển tức thời quá 150 pixel/khung hình
             if prev_x is not None and prev_y is not None:
                 dist = np.sqrt((x - prev_x)**2 + (y - prev_y)**2)
                 if dist > 150:
                     frame_count += 1
-                    continue # Bỏ qua điểm nhảy vọt này
+                    continue
 
             thoi_gian.append(frame_count / fps)
             toa_do_x.append(x)
@@ -84,7 +80,6 @@ def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
     toa_do_y_met = [(y - min(toa_do_y)) * ti_le_pixel_met for y in toa_do_y]
     toa_do_x_met = [(x - min(toa_do_x)) * ti_le_pixel_met for x in toa_do_x]
 
-    # Cắt bỏ những điểm nhiễu đầu/cuối mảng nếu có bằng nội suy đơn giản
     he_so_y = np.polyfit(thoi_gian, toa_do_y_met, 2)
     ay, by, cy = he_so_y[0], he_so_y[1], he_so_y[2]
     g_do_duoc = 2 * ay
@@ -92,7 +87,7 @@ def phan_tich_video(video_path, chieu_cao_thuc_te, loai_chuyen_dong):
 
     thong_so_tho = {
         "loai": loai_chuyen_dong,
-        "phuong_trinh_y": f"y = {ay:.2f}t² + {by:.2f}t + {cy:.2f}",
+        "phuong_trinh_y": f"y = {ay:.2f}t² + {b:.2f}t + {cy:.2f}",
         "g": g_do_duoc,
         "sai_so": sai_so
     }
@@ -187,33 +182,34 @@ with col2:
                         model = genai.GenerativeModel(ten_model_phu_hop)
                         img_to_send = Image.open(anh_do_thi)
                         
+                        # --- TÍCH HỢP MỤC ĐÍCH SƯ PHẠM VÀO AI ---
+                        muc_dich_thi_nghiem = ""
+                        if loai_chuyen_dong == "Rơi tự do":
+                            muc_dich_thi_nghiem = """
+                            - Chứng minh vật rơi tự do là chuyển động thẳng nhanh dần đều (quãng đường tỉ lệ với bình phương thời gian).
+                            - Xác định gia tốc rơi tự do g.
+                            - Rèn luyện năng lực đo đạc, xử lý số liệu, đánh giá sai số.
+                            """
+                        else:
+                            muc_dich_thi_nghiem = """
+                            - Khẳng định tính độc lập của hai chuyển động thành phần (thẳng đều theo phương ngang và rơi tự do theo phương dọc).
+                            - Giải thích vì sao vật chuyển động theo quỹ đạo Parabol.
+                            """
+                        
                         thong_so_x_txt = f"\n- Phương trình trục Ox: {thong_so.get('phuong_trinh_x', 'Không có')}" if loai_chuyen_dong != "Rơi tự do" else ""
                         
                         prompt = f"""
                         Bạn là một giáo viên Vật lí cấp 3 tâm huyết, thân thiện tên là cô Thi.
-                        Học sinh vừa làm xong thí nghiệm {thong_so['loai']} vật thể.
-                        Dựa vào bức ảnh đồ thị đính kèm và các số liệu đo được dưới đây, hãy viết một lời nhận xét ngắn gọn (khoảng 150 chữ) gửi trực tiếp cho học sinh.
+                        Học sinh vừa làm xong thí nghiệm {thong_so['loai']}.
+                        Mục đích cốt lõi của bài thực hành này là: {muc_dich_thi_nghiem}
+                        
+                        Dựa vào bức ảnh đồ thị đính kèm và các số liệu đo được dưới đây, hãy viết một lời nhận xét (khoảng 150 - 200 chữ) gửi trực tiếp cho học sinh.
                         - Phương trình trục Oy: {thong_so['phuong_trinh_y']}{thong_so_x_txt}
                         - Gia tốc g đo được (từ Oy): {thong_so['g']:.2f} m/s²
                         - Sai số so với g chuẩn (9.8): {thong_so['sai_so']:.2f}%
                         
-                        Yêu cầu:
-                        - Khen ngợi nếu sai số thấp (<10%), động viên và chỉ ra nguyên nhân sai số (lực cản không khí, góc máy quay chưa vuông góc mặt phẳng chuyển động).
-                        - Nếu là Ném ngang/Ném xiên, hãy khen quỹ đạo Parabol các em ghi lại được.
-                        - Xưng hô "cô" và "các em". Dùng giọng văn khích lệ, thấu hiểu và thật nhiều emoji liên quan đến trường học, vật lý.
-                        - QUAN TRỌNG: KHÔNG sử dụng định dạng toán học LaTeX (không dùng dấu $ hay \text). Viết đơn vị và công thức bằng văn bản bình thường.
-                        """
-                        
-                        response = model.generate_content([prompt, img_to_send])
-                        
-                        st.markdown("### 🤖 3. Nhận xét từ cô Thi AI")
-                        st.success(response.text)
-                        
-                    except KeyError:
-                        st.error("Lỗi: Không tìm thấy GEMINI_API_KEY trong cấu hình.")
-                    except Exception as e:
-                        st.error(f"Lỗi khi kết nối với Gemini: {e}")
-
-            os.remove(temp_video_path)
-        else:
-            st.warning("⚠️ Vui lòng tải lên một video trước!")
+                        Yêu cầu RẤT QUAN TRỌNG:
+                        1. Lồng ghép khéo léo MỤC ĐÍCH THÍ NGHIỆM vào lời nhận xét. Phải chỉ ra cho học sinh thấy kết quả của các em (hình dáng đồ thị cong, phương trình bậc 2) đã phản ánh và kiểm chứng đúng các định luật vật lý như thế nào.
+                        2. Khen ngợi nếu sai số thấp (<10%), động viên và chỉ ra nguyên nhân sai số (lực cản không khí, góc máy quay chưa vuông góc mặt phẳng chuyển động).
+                        3. Xưng hô "cô" và "các em". Dùng giọng văn khích lệ, thấu hiểu, truyền cảm hứng và dùng emoji liên quan đến giáo dục.
+                        4. KHÔNG sử dụng định dạng
