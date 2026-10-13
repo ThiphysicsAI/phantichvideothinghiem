@@ -15,7 +15,7 @@ def phan_tich_video(video_path, chieu_cao_thuc_te):
         return None, None, "Chiều cao thực tế phải lớn hơn 0!"
 
     cap = cv2.VideoCapture(video_path)
-    toa_do_x, toa_do_y, thoi_gian = [], [], [] # Bổ sung mảng lưu tọa độ X
+    toa_do_x, toa_do_y, thoi_gian = [], [], []
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
     frame_count = 0
     fgbg = cv2.createBackgroundSubtractorMOG2(detectShadows=False)
@@ -34,8 +34,8 @@ def phan_tich_video(video_path, chieu_cao_thuc_te):
             if cv2.contourArea(c) > 100:
                 ((x, y), radius) = cv2.minEnclosingCircle(c)
                 thoi_gian.append(frame_count / fps)
-                toa_do_x.append(x) # Lưu vết trục ngang
-                toa_do_y.append(y) # Lưu vết trục dọc
+                toa_do_x.append(x)
+                toa_do_y.append(y)
         frame_count += 1
     cap.release()
 
@@ -49,11 +49,9 @@ def phan_tich_video(video_path, chieu_cao_thuc_te):
     if do_roi_y < 50:
         return None, None, "❌ Độ rơi quá ngắn hoặc vật thể gần như đứng im, không đủ dữ liệu để phân tích vật lý!"
     
-    # Nếu độ lệch ngang lớn hơn 40% độ rơi dọc -> Không phải rơi thẳng đứng
     if do_lech_x > do_roi_y * 0.4:
         return None, None, "❌ AI phát hiện vật thể bị ném ngang hoặc di chuyển lộn xộn! Yêu cầu tải lên đúng video thả rơi tự do thẳng đứng."
 
-    # Kiểm tra chiều rơi (Trong xử lý ảnh, trục y hướng xuống dưới. Nên nếu y giảm tức là vật bay lên)
     nua_thoi_gian = len(toa_do_y) // 2
     y_dau = np.mean(toa_do_y[:nua_thoi_gian])
     y_cuoi = np.mean(toa_do_y[nua_thoi_gian:])
@@ -94,7 +92,6 @@ def phan_tich_video(video_path, chieu_cao_thuc_te):
 
     return temp_img.name, thong_so_tho, None
 
-
 # --- GIAO DIỆN WEB TỐI ƯU HÓA MOBILE & MÁY TÍNH ---
 st.set_page_config(page_title="PHYSIX - Phân tích thí nghiệm", layout="wide")
 
@@ -111,7 +108,6 @@ st.markdown("""
     .emoji-spin { display: inline-block; animation: spin 4s linear infinite; }
     .emoji-fall { display: inline-block; animation: fall 2s ease-in-out infinite; }
     .emoji-launch { display: inline-block; animation: launch 1.5s ease-in-out infinite; }
-    .result-box { background-color: #f0f7f4; border-left: 5px solid #2e7d32; padding: 15px; border-radius: 8px; font-size: 1.15rem !important; line-height: 1.6; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -154,7 +150,6 @@ with col2:
                         api_key_an = st.secrets["GEMINI_API_KEY"]
                         genai.configure(api_key=api_key_an)
                         
-                        # Đã cập nhật thành mô hình tốc độ siêu nhanh
                         ten_model_phu_hop = 'models/gemini-3.5-flash-lite'
                         model = genai.GenerativeModel(ten_model_phu_hop)
                         img_to_send = Image.open(anh_do_thi)
@@ -171,16 +166,14 @@ with col2:
                         Yêu cầu:
                         - Khen ngợi nếu sai số thấp (<10%), động viên và chỉ ra nguyên nhân (vận tốc đầu khác 0 do lực ném tay, lực cản không khí, góc quay camera) nếu sai số cao.
                         - Xưng hô "cô" và "các em". Dùng giọng văn khích lệ, thấu hiểu và thật nhiều emoji liên quan đến trường học, vật lý.
+                        - QUAN TRỌNG: KHÔNG sử dụng định dạng toán học LaTeX (không dùng dấu $ hay \text). Viết đơn vị và công thức bằng văn bản bình thường (ví dụ: m/s2, v0, y = 5t^2).
                         """
                         
                         response = model.generate_content([prompt, img_to_send])
                         
                         st.markdown("### 🤖 3. Nhận xét từ cô Thi AI")
-                        st.markdown(f"""
-                        <div class='result-box'>
-                            {response.text.replace('\n', '<br>')}
-                        </div>
-                        """, unsafe_allow_html=True)
+                        # Sử dụng st.success để tự động tạo khung xanh lá và render văn bản mượt mà
+                        st.success(response.text)
                         
                     except KeyError:
                         st.error("Lỗi: Không tìm thấy GEMINI_API_KEY. Hãy kiểm tra lại phần cài đặt Secrets trên Streamlit Cloud.")
