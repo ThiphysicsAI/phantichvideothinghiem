@@ -4,6 +4,7 @@ import numpy as np
 import streamlit as st
 import tempfile
 import os
+import math
 import google.generativeai as genai
 from PIL import Image
 try:
@@ -17,7 +18,6 @@ def phan_tich_video(video_path, chieu_cao_thuc_te, frame_bat_dau, frame_ket_thuc
     toa_do_x, toa_do_y, thoi_gian = [], [], []
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
     
-    # Đặt video chạy từ khung hình bắt đầu do người dùng chọn
     cap.set(cv2.CAP_PROP_POS_FRAMES, frame_bat_dau)
     frame_count = frame_bat_dau
     
@@ -32,23 +32,32 @@ def phan_tich_video(video_path, chieu_cao_thuc_te, frame_bat_dau, frame_ket_thuc
         fgmask = cv2.dilate(fgmask, None, iterations=2)
         contours, _ = cv2.findContours(fgmask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        if contours:
-            c = max(contours, key=cv2.contourArea)
-            if cv2.contourArea(c) > 100:
-                ((x, y), radius) = cv2.minEnclosingCircle(c)
-                thoi_gian.append((frame_count - frame_bat_dau) / fps) # Thời gian bắt đầu từ 0
-                
-                # Áp dụng gốc tọa độ mới (Dịch chuyển hệ quy chiếu)
-                toa_do_x.append(x - goc_x)
-                toa_do_y.append(y - goc_y)
+        valid_contours = []
+        for c in contours:
+            area = cv2.contourArea(c)
+            if 80 < area < 3000:
+                peri = cv2.arcLength(c, True)
+                if peri > 0:
+                    circularity = 4 * np.pi * area / (peri * peri)
+                    if circularity > 0.4:
+                        valid_contours.append(c)
+
+        if valid_contours:
+            c = max(valid_contours, key=cv2.contourArea)
+            ((x, y), radius) = cv2.minEnclosingCircle(c)
+            
+            thoi_gian.append((frame_count - frame_bat_dau) / fps)
+            # Áp dụng gốc tọa độ mới do người dùng click chọn
+            toa_do_x.append(x - goc_x)
+            toa_do_y.append(y - goc_y)
                 
         frame_count += 1
     cap.release()
 
     if len(toa_do_y) < 5:
-        return None, None, "AI không tìm thấy vật thể. Hãy chọn lại khung hình hoặc video khác!"
+        return None, None, "AI không tìm thấy vật thể. Hãy chọn lại khung hình hoặc đảm bảo quả bóng có màu nổi bật!"
 
-    # --- TÍNH TOÁN ---
+    # --- TÍNH TOÁN VẬT LÝ ---
     toa_do_y_met = [y * ti_le_pixel_met for y in toa_do_y]
 
     he_so = np.polyfit(thoi_gian, toa_do_y_met, 2)
@@ -63,13 +72,13 @@ def phan_tich_video(video_path, chieu_cao_thuc_te, frame_bat_dau, frame_ket_thuc
         "sai_so": sai_so
     }
 
-    # Vẽ đồ thị
+    # --- VẼ ĐỒ THỊ ---
     plt.figure(figsize=(8, 4))
-    plt.plot(thoi_gian, toa_do_y, 'ro-', markersize=4, label='Tọa độ vật')
+    plt.plot(thoi_gian, toa_do_y_met, 'ro-', markersize=4, label='Tọa độ vật (Đã trừ Gốc O)')
     plt.gca().invert_yaxis()
     plt.title('Đồ thị Tọa độ y - Thời gian t (Rơi tự do)')
     plt.xlabel('Thời gian t (giây)')
-    plt.ylabel(f'Tọa độ y (pixel) so với gốc ({goc_x}, {goc_y})')
+    plt.ylabel('Tọa độ y (mét)')
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.legend()
 
@@ -79,17 +88,21 @@ def phan_tich_video(video_path, chieu_cao_thuc_te, frame_bat_dau, frame_ket_thuc
 
     return temp_img.name, thong_so_tho, None
 
-# --- GIAO DIỆN WEB ---
+# --- GIAO DIỆN WEB TƯƠNG TÁC CAO ---
 st.set_page_config(page_title="PHYSIX - Phân tích thí nghiệm", layout="wide")
 
 st.markdown("""
 <style>
     html, body, [class*="css"] { font-size: 1.15rem !important; }
     .title-physix { font-size: 2.2rem !important; font-weight: 800; color: #FF4B4B; text-align: center; margin-bottom: 5px; }
-    div.stButton > button { font-size: 1.3rem !important; font-weight: bold !important; padding: 0.8rem 1.5rem !important; border-radius: 12px !important; background-color: #FF4B4B !important; color: white !important; border: none !important; width: 100% !important; box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: transform 0.1s; }
+    div.stButton > button { font-size: 1.2rem !important; font-weight: bold !important; border-radius: 8px !important; background-color: #FF4B4B !important; color: white !important; width: 100% !important; }
 </style>
 <div class='title-physix'>🚀 PHYSIX - NỀN TẢNG AI PHÂN TÍCH VẬT LÝ</div>
 """, unsafe_allow_html=True)
+
+# Khởi tạo bộ nhớ tạm để lưu 2 điểm click chuột
+if 'diem_thuoc_do' not in st.session_state:
+    st.session_state.diem_thuoc_do = []
 
 col1, col2 = st.columns([1.2, 1])
 
@@ -105,72 +118,96 @@ with col1:
         cap = cv2.VideoCapture(temp_video_path)
         tong_so_frame = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
-        st.markdown("**✂️ Cắt video (chọn khung hình thả vật và kết thúc):**")
+        st.markdown("**✂️ Cắt video:** Kéo thanh trượt để chọn đúng đoạn vật bắt đầu rơi.")
         frame_range = st.slider("Khung hình", 0, tong_so_frame, (0, tong_so_frame))
         
-        # Lấy khung hình đầu tiên để hiển thị cho người dùng click chọn tọa độ
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_range[0])
         ret, frame = cap.read()
         cap.release()
         
         if ret:
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            st.markdown("**📍 Chọn gốc tọa độ & 📏 Thước chuẩn (Click vào ảnh dưới):**")
-            # Dùng thư viện image_coordinates để lấy điểm click
-            toa_do_click = streamlit_image_coordinates(frame_rgb, key="click_toa_do")
             
-            goc_x, goc_y = 0, 0
-            if toa_do_click:
-                goc_x, goc_y = toa_do_click['x'], toa_do_click['y']
-                st.success(f"Đã chọn gốc tọa độ tại Pixel (X: {goc_x}, Y: {goc_y})")
-            else:
-                st.info("Hãy click vào ảnh trên để đặt gốc tọa độ O(0,0).")
+            st.markdown("---")
+            st.markdown("### 📍 2. Chấm tọa độ và Thước chuẩn")
+            st.write("🔹 **Click lần 1:** Chọn Gốc tọa độ (Vd: điểm bắt đầu rơi).")
+            st.write("🔹 **Click lần 2:** Chọn điểm thứ 2 để đo khoảng cách chuẩn (Vd: mặt sàn).")
+            
+            if st.button("🔄 Làm lại (Xóa các điểm đã chấm)"):
+                st.session_state.diem_thuoc_do = []
+                st.rerun()
                 
-            # Mô phỏng tính tỷ lệ pixel/mét (Vì Streamlit khó hỗ trợ click 2 điểm liên tiếp mượt mà, ta cho người dùng nhập khoảng cách Pixel)
-            st.markdown("📏 **Hiệu chuẩn khoảng cách (Scale):**")
-            col_a, col_b = st.columns(2)
-            with col_a:
-                chieu_cao_input = st.number_input("Chiều dài thực tế (mét)", value=1.5, step=0.1)
-            with col_b:
-                pixel_input = st.number_input("Tương ứng với số Pixel trên video", value=500)
+            # Lấy dữ liệu click chuột
+            click_val = streamlit_image_coordinates(frame_rgb, key="click_thuoc")
             
-            ti_le_pixel_met = chieu_cao_input / pixel_input if pixel_input > 0 else 0
+            # Xử lý logic lưu 2 điểm
+            if click_val is not None:
+                diem_moi = (click_val['x'], click_val['y'])
+                # Tránh tình trạng lưu trùng 1 điểm khi app tải lại
+                if len(st.session_state.diem_thuoc_do) == 0 or st.session_state.diem_thuoc_do[-1] != diem_moi:
+                    if len(st.session_state.diem_thuoc_do) < 2:
+                        st.session_state.diem_thuoc_do.append(diem_moi)
+
+            goc_x, goc_y = 0, 0
+            pixel_do_duoc = 100 # Chống lỗi chia 0
+            
+            # Hiển thị thông báo hướng dẫn tương tác
+            if len(st.session_state.diem_thuoc_do) == 0:
+                st.info("👈 Hãy click chuột vào ảnh để chọn điểm đầu tiên...")
+            elif len(st.session_state.diem_thuoc_do) == 1:
+                goc_x, goc_y = st.session_state.diem_thuoc_do[0]
+                st.success(f"✅ Đã lưu Gốc O tại (X: {goc_x}, Y: {goc_y}). Hãy click điểm thứ 2!")
+            elif len(st.session_state.diem_thuoc_do) >= 2:
+                goc_x, goc_y = st.session_state.diem_thuoc_do[0]
+                x2, y2 = st.session_state.diem_thuoc_do[1]
+                st.success(f"✅ Gốc O: ({goc_x}, {goc_y}) | Điểm thứ hai: ({x2}, {y2})")
+                
+                # Áp dụng công thức Toán học Pytago để tính khoảng cách giữa 2 điểm
+                pixel_do_duoc = math.sqrt((x2 - goc_x)**2 + (y2 - goc_y)**2)
+                st.warning(f"📏 Phần mềm đã đo được khoảng cách trên ảnh là: **{pixel_do_duoc:.2f} Pixel**")
+                
+            st.markdown("**Nhập chiều dài thực tế giữa 2 điểm vừa click:**")
+            chieu_cao_input = st.number_input("Chiều dài ngoài đời (mét)", value=1.00, step=0.1)
+            
+            ti_le_pixel_met = chieu_cao_input / pixel_do_duoc if pixel_do_duoc > 0 else 0
             
             st.markdown("<br>", unsafe_allow_html=True)
-            nut_phan_tich = st.button("✨ PHÂN TÍCH & NHẬN XÉT BẰNG AI ✨", use_container_width=True)
+            nut_phan_tich = st.button("✨ XỬ LÝ SỐ LIỆU & GỌI AI NHẬN XÉT ✨", use_container_width=True)
 
 with col2:
     if video_dau_vao is not None and 'nut_phan_tich' in locals() and nut_phan_tich:
-        with st.spinner('⏳ Đang xử lý video theo hệ tọa độ của bạn...'):
-            anh_do_thi, thong_so, loi = phan_tich_video(temp_video_path, chieu_cao_input, frame_range[0], frame_range[1], goc_x, goc_y, ti_le_pixel_met)
+        if len(st.session_state.diem_thuoc_do) < 2:
+            st.error("Vui lòng click đủ 2 điểm trên màn hình để làm thước chuẩn trước khi Phân tích!")
+        else:
+            with st.spinner('⏳ Đang phân tích chuyển động theo hệ quy chiếu của bạn...'):
+                anh_do_thi, thong_so, loi = phan_tich_video(temp_video_path, chieu_cao_input, frame_range[0], frame_range[1], goc_x, goc_y, ti_le_pixel_met)
 
-            if loi:
-                st.error(loi)
-            else:
-                st.markdown("### 📊 2. Kết quả & Đồ thị")
-                st.image(anh_do_thi, caption="Đồ thị Động học trích xuất từ video của em", use_container_width=True)
-                
-                try:
-                    api_key_an = st.secrets["GEMINI_API_KEY"]
-                    genai.configure(api_key=api_key_an)
+                if loi:
+                    st.error(loi)
+                else:
+                    st.markdown("### 📊 3. Kết quả & Đồ thị")
+                    st.image(anh_do_thi, caption="Đồ thị Động học trích xuất từ video của em", use_container_width=True)
                     
-                    ten_model_phu_hop = 'models/gemini-3.5-flash-lite'
-                    model = genai.GenerativeModel(ten_model_phu_hop)
-                    img_to_send = Image.open(anh_do_thi)
-                    
-                    prompt = f"""
-                    Bạn là một giáo viên Vật lí cấp 3 tâm huyết, thân thiện tên là cô Thi.
-                    Học sinh vừa làm xong thí nghiệm thả rơi tự do. Học sinh đã tự hiệu chỉnh khung hình, gốc tọa độ và thước đo.
-                    Dựa vào bức ảnh đồ thị y-t đính kèm và số liệu:
-                    - Phương trình: {thong_so['phuong_trinh']}
-                    - Gia tốc g: {thong_so['g']:.2f} m/s² (Sai số: {thong_so['sai_so']:.2f}%)
-                    
-                    Hãy nhận xét khích lệ học sinh về kết quả này (không dùng mã LaTeX).
-                    """
-                    
-                    response = model.generate_content([prompt, img_to_send])
-                    st.markdown("### 🤖 3. Nhận xét từ cô Thi AI")
-                    st.success(response.text)
-                    
-                except Exception as e:
-                    st.error(f"Lỗi khi kết nối với Gemini: {e}")
+                    try:
+                        api_key_an = st.secrets["GEMINI_API_KEY"]
+                        genai.configure(api_key=api_key_an)
+                        
+                        ten_model_phu_hop = 'models/gemini-3.5-flash-lite'
+                        model = genai.GenerativeModel(ten_model_phu_hop)
+                        img_to_send = Image.open(anh_do_thi)
+                        
+                        prompt = f"""
+                        Bạn là cô Thi, giáo viên Vật lí cấp 3.
+                        Học sinh vừa làm xong thí nghiệm thả rơi tự do. Nhóm đã tự thiết lập Gốc tọa độ và Thước chuẩn trên ứng dụng.
+                        - Phương trình tọa độ y theo t: {thong_so['phuong_trinh']}
+                        - Gia tốc g đo được: {thong_so['g']:.2f} m/s² (Sai số: {thong_so['sai_so']:.2f}%)
+                        
+                        Hãy viết nhận xét khích lệ. Khen ngợi nếu sai số thấp. KHÔNG dùng định dạng toán học LaTeX.
+                        """
+                        
+                        response = model.generate_content([prompt, img_to_send])
+                        st.markdown("### 🤖 4. Nhận xét từ cô Thi AI")
+                        st.success(response.text)
+                        
+                    except Exception as e:
+                        st.error(f"Lỗi khi kết nối với Gemini: {e}")
